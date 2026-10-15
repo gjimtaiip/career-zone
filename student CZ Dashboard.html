@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Student Profiles Directory</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS with auto-fallback -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    /* Print styles to ensure multi-page printing without cut-offs */
+    @media print {
+      @page {
+        margin: 12mm 10mm;
+        size: A4 portrait;
+      }
+      html, body {
+        height: auto !important;
+        overflow: visible !important;
+        background: white !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+      #mainWrapper, #profileContainer, #detailView {
+        display: block !important;
+        width: 100% !important;
+        height: auto !important;
+        overflow: visible !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      .print-card {
+        break-inside: avoid !important;
+        page-break-inside: avoid !important;
+        margin-bottom: 1rem !important;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: none !important;
+      }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen flex flex-col font-sans overflow-hidden">
+
+  <!-- Top Navbar -->
+  <header class="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between shadow-sm z-10 no-print">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-100">
+        <i data-lucide="graduation-cap" class="w-6 h-6"></i>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold text-slate-900 leading-tight">Student Profile Dossier</h1>
+        <p class="text-xs text-slate-500">Interactive Student Record Explorer</p>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex items-center space-x-3">
+      <div id="statsBar" class="hidden text-xs text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 flex items-center space-x-4">
+        <span>Loaded: <strong id="totalCount" class="text-indigo-600">0</strong></span>
+        <span>•</span>
+        <span>Placement Ready: <strong id="placementCount" class="text-emerald-600">0</strong></span>
+      </div>
+
+      <!-- Explicit file button (bypasses label nesting quirks) -->
+      <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" style="display: none;" />
+      <button type="button" onclick="document.getElementById('fileInput').click()" 
+              class="inline-flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm cursor-pointer">
+        <i data-lucide="upload" class="w-4 h-4"></i>
+        <span>Select Excel / CSV</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Error / Status Notice -->
+  <div id="errorAlert" class="hidden bg-rose-50 border-b border-rose-200 px-6 py-2.5 text-xs text-rose-700 font-medium flex items-center justify-between no-print">
+    <span id="errorMessage">Error loading file.</span>
+    <button onclick="document.getElementById('errorAlert').classList.add('hidden')" class="text-rose-500 hover:text-rose-700 font-bold ml-4">✕</button>
+  </div>
+
+  <!-- Main View Container -->
+  <div id="mainWrapper" class="flex flex-1 overflow-hidden">
+
+    <!-- Left Sidebar: Student Directory -->
+    <aside class="w-80 md:w-96 bg-white border-r border-slate-200 flex flex-col no-print shrink-0">
+      <!-- Search & Filters -->
+      <div class="p-3 border-b border-slate-200 space-y-2 bg-slate-50/50">
+        <div class="relative">
+          <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-slate-400"></i>
+          <input type="text" id="searchInput" placeholder="Search name, roll ID, email..." 
+                 class="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <select id="courseFilter" class="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <option value="">All Batches</option>
+          </select>
+          <select id="placementFilter" class="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <option value="">All Placements</option>
+            <option value="want">Wants Placement</option>
+            <option value="own">Arranging Own</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Students List Items -->
+      <div id="studentsList" class="flex-1 overflow-y-auto divide-y divide-slate-100">
+        <div class="p-8 text-center text-slate-400 text-sm">
+          <i data-lucide="file-text" class="w-10 h-10 mx-auto mb-2 text-slate-300"></i>
+          Upload or drag & drop your Excel/CSV file to display students.
+        </div>
+      </div>
+    </aside>
+
+    <!-- Right Panel: Student Profile Detail View -->
+    <main id="profileContainer" class="flex-1 overflow-y-auto p-6 bg-slate-50">
+      
+      <!-- Drag & Drop Zone / Initial Placeholder -->
+      <div id="placeholderView" 
+           ondragover="event.preventDefault(); this.classList.add('border-indigo-500', 'bg-indigo-50/30');"
+           ondragleave="this.classList.remove('border-indigo-500', 'bg-indigo-50/30');"
+           ondrop="handleDrop(event)"
+           class="h-full border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-slate-400 text-center p-8 transition no-print cursor-pointer"
+           onclick="document.getElementById('fileInput').click()">
+        <div class="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-4">
+          <i data-lucide="file-spreadsheet" class="w-8 h-8 text-indigo-500"></i>
+        </div>
+        <h3 class="text-base font-semibold text-slate-800 mb-1">Select or Drag & Drop File Here</h3>
+        <p class="text-xs max-w-sm text-slate-500 mb-4">Compatible with <code>student-profiles (2) BBA.xlsx</code> or any CSV/XLSX export.</p>
+        <span class="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-semibold">
+          <i data-lucide="folder-open" class="w-3.5 h-3.5"></i>
+          <span>Browse File</span>
+        </span>
+      </div>
+
+      <!-- Detail Card Content -->
+      <div id="detailView" class="hidden max-w-5xl mx-auto space-y-6 pb-12">
+        
+        <!-- Header Profile Card -->
+        <div class="print-card bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm relative overflow-hidden">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div class="flex items-center space-x-4">
+              <div id="avatarBadge" class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white text-xl font-bold shadow-md shadow-indigo-100 uppercase">
+                JD
+              </div>
+              <div>
+                <div class="flex items-center space-x-2">
+                  <h2 id="profName" class="text-2xl font-bold text-slate-900 leading-tight">Student Name</h2>
+                  <span id="profPlacementTag" class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Placement</span>
+                </div>
+                <p class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span>Batch: <strong id="profBatch" class="text-slate-700">-</strong></span>
+                  <span>•</span>
+                  <span>Semester: <strong id="profSemester" class="text-slate-700">-</strong></span>
+                  <span>•</span>
+                  <span>ID: <code id="profId" class="text-indigo-600 font-mono text-[11px]">-</code></span>
+                </p>
+              </div>
+            </div>
+
+            <!-- Contact & Print Actions -->
+            <div class="flex items-center space-x-2 no-print">
+              <a id="emailBtn" href="#" class="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition">
+                <i data-lucide="mail" class="w-3.5 h-3.5"></i>
+                <span>Email</span>
+              </a>
+              <a id="phoneBtn" href="#" class="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition">
+                <i data-lucide="phone" class="w-3.5 h-3.5"></i>
+                <span>Call</span>
+              </a>
+              <button onclick="window.print()" class="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium transition cursor-pointer">
+                <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+                <span>Print Profile</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 1: Academic Trajectory -->
+        <div class="print-card bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm">
+          <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 flex items-center space-x-2">
+            <i data-lucide="award" class="w-4 h-4 text-indigo-600"></i>
+            <span>Academic Performance Record</span>
+          </h3>
+          <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3" id="scoresGrid"></div>
+        </div>
+
+        <!-- Section 2: Career Ambitions & Priorities -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 print:grid-cols-2">
+          <div class="print-card bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm flex flex-col justify-between">
+            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center space-x-2">
+              <i data-lucide="target" class="w-4 h-4 text-indigo-600"></i>
+              <span>Milestone Goals</span>
+            </h3>
+            <div class="space-y-3 text-xs">
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="font-semibold text-indigo-600 block mb-0.5">Year 1 Goal:</span>
+                <p id="goal1" class="text-slate-700">-</p>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="font-semibold text-indigo-600 block mb-0.5">Year 2 Goal:</span>
+                <p id="goal2" class="text-slate-700">-</p>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="font-semibold text-indigo-600 block mb-0.5">Year 3 Goal:</span>
+                <p id="goal3" class="text-slate-700">-</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="print-card bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm">
+            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center space-x-2">
+              <i data-lucide="bar-chart-2" class="w-4 h-4 text-indigo-600"></i>
+              <span>Job Preference Ranking (1 = Highest)</span>
+            </h3>
+            <div class="space-y-2 text-xs" id="rankingsContainer"></div>
+          </div>
+        </div>
+
+        <!-- Section 3: Skills & Certifications -->
+        <div class="print-card bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+          <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center space-x-2">
+            <i data-lucide="sparkles" class="w-4 h-4 text-indigo-600"></i>
+            <span>Competencies & Accomplishments</span>
+          </h3>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs print:grid-cols-2">
+            <div class="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
+              <span class="font-bold text-indigo-900 block mb-1">Current Skills</span>
+              <p id="skillsHave" class="text-slate-700 leading-relaxed whitespace-pre-line">-</p>
+            </div>
+            <div class="p-4 bg-violet-50/50 rounded-xl border border-violet-100">
+              <span class="font-bold text-violet-900 block mb-1">Skills Desired / To Learn</span>
+              <p id="skillsWant" class="text-slate-700 leading-relaxed whitespace-pre-line">-</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs pt-2 print:grid-cols-4">
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+              <strong class="text-slate-900 block mb-1">Certifications</strong>
+              <p id="certifications" class="text-slate-600">-</p>
+            </div>
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+              <strong class="text-slate-900 block mb-1">Professional Experience</strong>
+              <p id="achProfessional" class="text-slate-600">-</p>
+            </div>
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+              <strong class="text-slate-900 block mb-1">Key Projects</strong>
+              <p id="achProjects" class="text-slate-600">-</p>
+            </div>
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+              <strong class="text-slate-900 block mb-1">Extracurricular & Hobbies</strong>
+              <p id="hobbiesExtra" class="text-slate-600">-</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 4: Pathways & Personal Details -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 print:grid-cols-2">
+          <div class="print-card bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm space-y-3 text-xs">
+            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center space-x-2">
+              <i data-lucide="compass" class="w-4 h-4 text-indigo-600"></i>
+              <span>Higher Education & Entrepreneurship</span>
+            </h3>
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+              <div class="flex justify-between"><span class="text-slate-500">Higher Ed Interest:</span> <strong id="higherEdInterest" class="text-slate-800">-</strong></div>
+              <div class="flex justify-between"><span class="text-slate-500">Target Degree:</span> <span id="higherEdDegree" class="text-slate-800">-</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Target Country/Loc:</span> <span id="higherEdCountry" class="text-slate-800">-</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Competitive Exams:</span> <span id="higherEdExams" class="text-slate-800">-</span></div>
+            </div>
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+              <div class="flex justify-between"><span class="text-slate-500">Entrepreneurship:</span> <strong id="entrepreneurInterest" class="text-slate-800">-</strong></div>
+              <div class="flex justify-between"><span class="text-slate-500">Startup Stage:</span> <span id="entrepreneurStage" class="text-slate-800">-</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Focus Areas:</span> <span id="entrepreneurAreas" class="text-slate-800 text-right">-</span></div>
+            </div>
+          </div>
+
+          <div class="print-card bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm space-y-3 text-xs">
+            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center space-x-2">
+              <i data-lucide="heart-handshake" class="w-4 h-4 text-indigo-600"></i>
+              <span>Background & Support Requested</span>
+            </h3>
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+              <div class="flex justify-between"><span class="text-slate-500">Guardian / Parents:</span> <span id="guardianInfo" class="text-slate-800 text-right">-</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Occupation & Income:</span> <span id="incomeInfo" class="text-slate-800 text-right">-</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Living With:</span> <span id="livingWith" class="text-slate-800">-</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Languages:</span> <span id="languages" class="text-slate-800">-</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Role Model / Idol:</span> <span id="idol" class="text-slate-800">-</span></div>
+            </div>
+            <div class="p-3 bg-amber-50/60 rounded-xl border border-amber-100 space-y-1">
+              <span class="font-bold text-amber-900 block">Reported Challenges & Support:</span>
+              <p><strong class="text-slate-600">Challenges:</strong> <span id="challenges" class="text-slate-800">-</span></p>
+              <p><strong class="text-slate-600">Needs Support With:</strong> <span id="supportNeeded" class="text-slate-800">-</span></p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <script>
+    if (window.lucide) lucide.createIcons();
+
+    let allStudents = [];
+    let activeIndex = -1;
+
+    const fileInput = document.getElementById('fileInput');
+    const searchInput = document.getElementById('searchInput');
+    const courseFilter = document.getElementById('courseFilter');
+    const placementFilter = document.getElementById('placementFilter');
+    const studentsList = document.getElementById('studentsList');
+    const placeholderView = document.getElementById('placeholderView');
+    const detailView = document.getElementById('detailView');
+    const errorAlert = document.getElementById('errorAlert');
+    const errorMessage = document.getElementById('errorMessage');
+
+    function showError(msg) {
+      errorAlert.classList.remove('hidden');
+      errorMessage.textContent = msg;
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      placeholderView.classList.remove('border-indigo-500', 'bg-indigo-50/30');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+        processFile(e.dataTransfer.files[0]);
+      }
+    }
+
+    // Reset value on click so selecting the same file triggers 'change' again
+    fileInput.addEventListener('click', function() {
+      this.value = '';
+    });
+
+    fileInput.addEventListener('change', function(e) {
+      const file = e.target.files && e.target.files[0];
+      if (file) processFile(file);
+    });
+
+    function processFile(file) {
+      errorAlert.classList.add('hidden');
+      if (typeof XLSX === 'undefined') {
+        showError('SheetJS library failed to load from CDN. Please check your internet connection.');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        try {
+          const data = new Uint8Array(evt.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+            showError('No sheets found in the uploaded file.');
+            return;
+          }
+          const sheetName = workbook.SheetNames[0];
+          const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+          
+          if (!rows || rows.length === 0) {
+            showError('The uploaded file appears to be empty.');
+            return;
+          }
+
+          allStudents = rows;
+          populateBatchDropdown();
+          updateTopStats();
+          renderList();
+          selectStudent(0);
+        } catch (err) {
+          console.error(err);
+          showError('Failed to parse file: ' + err.message);
+        }
+      };
+      reader.onerror = function() {
+        showError('Could not read file from disk.');
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function populateBatchDropdown() {
+      const courses = new Set();
+      allStudents.forEach(s => { if (s.courseBatch) courses.add(s.courseBatch); });
+      courseFilter.innerHTML = '<option value="">All Batches</option>';
+      courses.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        courseFilter.appendChild(opt);
+      });
+    }
+
+    function updateTopStats() {
+      document.getElementById('statsBar').classList.remove('hidden');
+      document.getElementById('totalCount').textContent = allStudents.length;
+      const placementCount = allStudents.filter(s => String(s.placementConsent || '').toLowerCase().includes('want')).length;
+      document.getElementById('placementCount').textContent = placementCount;
+    }
+
+    function getFilteredStudents() {
+      const query = searchInput.value.toLowerCase().trim();
+      const course = courseFilter.value;
+      const placement = placementFilter.value;
+
+      return allStudents.map((s, idx) => ({ ...s, originalIndex: idx })).filter(s => {
+        const matchQuery = !query || 
+          String(s.name || '').toLowerCase().includes(query) ||
+          String(s.email || '').toLowerCase().includes(query) ||
+          String(s.studentId || '').toLowerCase().includes(query) ||
+          String(s.courseBatch || '').toLowerCase().includes(query);
+
+        const matchCourse = !course || s.courseBatch === course;
+        
+        let matchPlacement = true;
+        if (placement === 'want') {
+          matchPlacement = String(s.placementConsent || '').toLowerCase().includes('want');
+        } else if (placement === 'own') {
+          matchPlacement = String(s.placementConsent || '').toLowerCase().includes('own');
+        }
+
+        return matchQuery && matchCourse && matchPlacement;
+      });
+    }
+
+    function renderList() {
+      const list = getFilteredStudents();
+      studentsList.innerHTML = '';
+
+      if (list.length === 0) {
+        studentsList.innerHTML = `<div class="p-6 text-center text-slate-400 text-xs">No matching students found.</div>`;
+        return;
+      }
+
+      list.forEach(item => {
+        const isActive = item.originalIndex === activeIndex;
+        const initials = (item.name || 'S').split(' ').map(n => n[0]).slice(0, 2).join('');
+        const wantsPlacement = String(item.placementConsent || '').toLowerCase().includes('want');
+
+        const card = document.createElement('div');
+        card.className = `p-3.5 cursor-pointer transition flex items-center space-x-3 ${isActive ? 'bg-indigo-50 border-r-4 border-indigo-600' : 'hover:bg-slate-50'}`;
+        card.onclick = () => selectStudent(item.originalIndex);
+
+        card.innerHTML = `
+          <div class="w-10 h-10 rounded-xl ${isActive ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'} flex items-center justify-center font-bold text-xs shrink-0 uppercase">
+            ${initials}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-bold text-slate-900 truncate">${item.name || 'Unnamed'}</h4>
+              <span class="text-[9px] px-1.5 py-0.5 rounded font-medium ${wantsPlacement ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
+                ${wantsPlacement ? 'Placement' : 'Own'}
+              </span>
+            </div>
+            <p class="text-[11px] text-slate-500 truncate mt-0.5">${item.courseBatch || 'N/A'} • Sem ${item.courseSemester || item.yearSem || '-'}</p>
+            <p class="text-[10px] text-slate-400 truncate">${item.email || item.phone || ''}</p>
+          </div>
+        `;
+        studentsList.appendChild(card);
+      });
+    }
+
+    function selectStudent(index) {
+      activeIndex = index;
+      renderList();
+      const s = allStudents[index];
+      if (!s) return;
+
+      placeholderView.classList.add('hidden');
+      detailView.classList.remove('hidden');
+
+      const initials = (s.name || 'S').split(' ').map(n => n[0]).slice(0, 2).join('');
+      document.getElementById('avatarBadge').textContent = initials;
+      document.getElementById('profName').textContent = s.name || 'Unnamed';
+      document.getElementById('profBatch').textContent = s.courseBatch || 'Not specified';
+      document.getElementById('profSemester').textContent = s.courseSemester || s.yearSem || 'N/A';
+      document.getElementById('profId').textContent = s.studentId || s.id || 'N/A';
+
+      const wantsPlacement = String(s.placementConsent || '').toLowerCase().includes('want');
+      const placementTag = document.getElementById('profPlacementTag');
+      placementTag.textContent = s.placementConsent || 'Consent not set';
+      placementTag.className = wantsPlacement 
+        ? 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200'
+        : 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200';
+
+      const emailBtn = document.getElementById('emailBtn');
+      if (s.email) {
+        emailBtn.href = `mailto:${s.email}`;
+        emailBtn.style.display = 'inline-flex';
+      } else { emailBtn.style.display = 'none'; }
+
+      const phoneBtn = document.getElementById('phoneBtn');
+      if (s.phone || s.whatsapp) {
+        phoneBtn.href = `tel:${s.phone || s.whatsapp}`;
+        phoneBtn.style.display = 'inline-flex';
+      } else { phoneBtn.style.display = 'none'; }
+
+      const semesters = [
+        { label: 'Class 12', score: s.edu_class12_score, reap: s.edu_class12_reappear },
+        { label: 'Sem 1', score: s.edu_sem1_score, reap: s.edu_sem1_reappear },
+        { label: 'Sem 2', score: s.edu_sem2_score, reap: s.edu_sem2_reappear },
+        { label: 'Sem 3', score: s.edu_sem3_score, reap: s.edu_sem3_reappear },
+        { label: 'Sem 4', score: s.edu_sem4_score, reap: s.edu_sem4_reappear },
+        { label: 'Sem 5', score: s.edu_sem5_score, reap: s.edu_sem5_reappear },
+        { label: 'Sem 6', score: s.edu_sem6_score, reap: s.edu_sem6_reappear }
+      ];
+
+      const grid = document.getElementById('scoresGrid');
+      grid.innerHTML = '';
+      semesters.forEach(sem => {
+        const val = sem.score !== undefined && sem.score !== '' ? sem.score : '—';
+        const hasReappear = sem.reap && String(sem.reap).trim() !== '0' && String(sem.reap).toLowerCase() !== 'no' && String(sem.reap).toLowerCase() !== 'nil';
+        const chip = document.createElement('div');
+        chip.className = 'p-3 bg-slate-50 border border-slate-100 rounded-xl text-center relative';
+        chip.innerHTML = `
+          <span class="text-[10px] uppercase font-bold text-slate-400 block">${sem.label}</span>
+          <span class="text-base font-extrabold text-slate-800">${val}</span>
+          ${hasReappear ? `<span class="block text-[9px] text-rose-500 font-medium">Reappear: ${sem.reap}</span>` : ''}
+        `;
+        grid.appendChild(chip);
+      });
+
+      document.getElementById('goal1').textContent = s.goalYear1 || 'None declared';
+      document.getElementById('goal2').textContent = s.goalYear2 || 'None declared';
+      document.getElementById('goal3').textContent = s.goalYear3 || 'None declared';
+
+      const rankings = [
+        { title: 'Leadership', rank: s.rank_leadership },
+        { title: 'Learning & Growth', rank: s.rank_learningGrowth },
+        { title: 'Job Security', rank: s.rank_jobSecurity },
+        { title: 'Compensation', rank: s.rank_compensation },
+        { title: 'Work-Life Balance', rank: s.rank_workLifeBalance },
+        { title: 'Social Impact', rank: s.rank_socialImpact },
+      ].sort((a, b) => (Number(a.rank) || 99) - (Number(b.rank) || 99));
+
+      const rankBox = document.getElementById('rankingsContainer');
+      rankBox.innerHTML = '';
+      rankings.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between py-1 border-b border-slate-50';
+        row.innerHTML = `
+          <span class="text-slate-700 font-medium">${r.title}</span>
+          <span class="w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold flex items-center justify-center text-[10px]">${r.rank || '—'}</span>
+        `;
+        rankBox.appendChild(row);
+      });
+
+      document.getElementById('skillsHave').textContent = s.skillsHave || 'None listed';
+      document.getElementById('skillsWant').textContent = s.skillsWant || 'None listed';
+      document.getElementById('certifications').textContent = s.certifications || 'None';
+      document.getElementById('achProfessional').textContent = s.achProfessional || 'None';
+      document.getElementById('achProjects').textContent = s.achProjects || 'None';
+      document.getElementById('hobbiesExtra').textContent = [s.hobbies, s.achExtra].filter(Boolean).join(' • ') || 'None';
+
+      document.getElementById('higherEdInterest').textContent = s.higherEdInterest || 'No';
+      document.getElementById('higherEdDegree').textContent = s.higherEdDegree || 'N/A';
+      document.getElementById('higherEdCountry').textContent = [s.higherEdCountry, s.higherEdLocation].filter(Boolean).join(', ') || 'N/A';
+      document.getElementById('higherEdExams').textContent = s.higherEdExams || 'N/A';
+
+      document.getElementById('entrepreneurInterest').textContent = s.entrepreneurInterest || 'No';
+      document.getElementById('entrepreneurStage').textContent = s.entrepreneurStage || 'N/A';
+      document.getElementById('entrepreneurAreas').textContent = s.entrepreneurAreas || 'N/A';
+
+      document.getElementById('guardianInfo').textContent = `${s.guardianName || 'N/A'} (${s.livingWith || 'Family'})`;
+      document.getElementById('incomeInfo').textContent = `${s.parentOccupation || 'N/A'} • ${s.familyIncome || 'N/A'}`;
+      document.getElementById('livingWith').textContent = `${s.livingWith || 'N/A'} (${s.familyType || ''})`;
+      document.getElementById('languages').textContent = s.languages || 'N/A';
+      document.getElementById('idol').textContent = s.idol || 'N/A';
+
+      document.getElementById('challenges').textContent = s.challenges || 'None reported';
+      document.getElementById('supportNeeded').textContent = s.supportNeeded || 'None requested';
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    searchInput.addEventListener('input', renderList);
+    courseFilter.addEventListener('change', renderList);
+    placementFilter.addEventListener('change', renderList);
+  </script>
+</body>
+</html>
